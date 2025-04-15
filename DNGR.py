@@ -14,12 +14,36 @@ import logging
 import sys
 import pdb
 
+import numpy as np
+# from keras.utils import Sequence
+
+class DataGenerator:
+    def __init__(self, X, y, batch_size=32, shuffle=True):
+        self.X = X
+        self.y = y
+        self.batch_size = batch_size
+        self.shuffle = shuffle
+        self.n = len(self.X)
+
+    def generate(self):
+        while True:
+            indices = np.arange(self.n)
+            if self.shuffle:
+                np.random.shuffle(indices)
+            for i in range(0, self.n, self.batch_size):
+                batch_indices = indices[i:i + self.batch_size]
+                X_batch = self.X[batch_indices]
+                y_batch = self.y[batch_indices]
+                yield X_batch, y_batch
+
+
+
 
 def read_graph(filename,g_type):
 	with open('data/'+filename,'rb') as f:
 		if g_type == "undirected":
 			G = nx.read_weighted_edgelist(f)
-  		else:
+		else:
 			G = nx.read_weighted_edgelist(f,create_using=nx.DiGraph())
 		node_idx = G.nodes()
 	adj_matrix = np.asarray(nx.adjacency_matrix(G, nodelist=None,weight='weight').todense())	
@@ -83,25 +107,30 @@ def model(data, hidden_layers, hidden_neurons, output_file, validation_split=0.9
 		decoded = Dense(hidden_neurons[j], activation='relu')(decoded)
 	decoded = Dense(data.shape[1], activation='sigmoid')(decoded)
 
-	autoencoder = Model(input=input_sh, output=decoded)
+	autoencoder = Model(inputs=input_sh, outputs=decoded)
 	autoencoder.compile(optimizer='adadelta', loss='mse')
 
 	checkpointer = ModelCheckpoint(filepath='data/bestmodel' + output_file + ".hdf5", verbose=1, save_best_only=True)
 	earlystopper = EarlyStopping(monitor='val_loss', patience=15, verbose=1)
 
-	train_generator = DataGenerator(batch_size)
-	train_generator.fit(train_data, train_data)
-	val_generator = DataGenerator(batch_size)
-	val_generator.fit(val_data, val_data)
+	# train_generator = DataGenerator(batch_size)
+	# train_generator.fit(train_data, train_data)
+	# val_generator = DataGenerator(batch_size)
+	# val_generator.fit(val_data, val_data)
 
-	autoencoder.fit_generator(train_generator,
-		samples_per_epoch=len(train_data),
-		nb_epoch=100,
-		validation_data=val_generator,
-		nb_val_samples=len(val_data),
-		max_q_size=batch_size,
-		callbacks=[checkpointer, earlystopper])
-	enco = Model(input=input_sh, output=encoded)
+	train_gen = DataGenerator(train_data, train_data, batch_size=batch_size).generate()
+	val_gen = DataGenerator(val_data, val_data, batch_size=batch_size).generate()
+
+	autoencoder.fit_generator(
+		train_gen,
+		steps_per_epoch=int(np.ceil(len(train_data) / batch_size)),
+		epochs=100,
+		validation_data=val_gen,
+		validation_steps=int(np.ceil(len(val_data) / batch_size)),
+		callbacks=[checkpointer, earlystopper]
+	)
+
+	enco = Model(inputs=input_sh, outputs=encoded)
 	enco.compile(optimizer='adadelta', loss='mse')
 	reprsn = enco.predict(data)
 	return reprsn
@@ -157,5 +186,4 @@ def main():
   process_scripts(args)
 
 if __name__ == '__main__':
-	sys.exit(main())	
-	
+	sys.exit(main())
